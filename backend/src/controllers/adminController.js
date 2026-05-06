@@ -1,10 +1,8 @@
-import User from "../models/User.js";
+import { listUsers } from "../models/userStore.js";
 
 export const getUsers = async (req, res, next) => {
   try {
-    const users = await User.find({})
-      .select("name email role avatarUrl createdAt updatedAt")
-      .sort({ createdAt: -1 });
+    const users = await listUsers();
 
     const analytics = {
       totalUsers: users.length,

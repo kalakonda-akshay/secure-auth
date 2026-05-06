@@ -1,7 +1,15 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import User from "../models/User.js";
+import {
+  clearRefreshTokenHash,
+  compareUserPassword,
+  createUser,
+  findUserByEmail,
+  findUserById,
+  saveRefreshTokenHash,
+  userToSafeObject
+} from "../models/userStore.js";
 
 const cookieOptions = (maxAge) => ({
   httpOnly: true,
@@ -41,12 +49,12 @@ const signRefreshToken = (userId) =>
   );
 
 const sendTokens = async (res, user, rememberMe = false) => {
-  const accessToken = signAccessToken(user._id);
-  const refreshToken = signRefreshToken(user._id);
+  const userId = String(user._id || user.id);
+  const accessToken = signAccessToken(userId);
+  const refreshToken = signRefreshToken(userId);
   const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
 
-  user.refreshTokenHash = refreshTokenHash;
-  await user.save({ validateBeforeSave: false });
+  await saveRefreshTokenHash(user, refreshTokenHash);
 
   const accessMaxAge = 15 * 60 * 1000;
   const refreshMaxAge = rememberMe ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
@@ -83,13 +91,13 @@ export const register = async (req, res, next) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
-    const existingUser = await User.findOne({ email: normalizedEmail });
+    const existingUser = await findUserByEmail(normalizedEmail);
     if (existingUser) {
       res.status(409);
       throw new Error("An account with this email already exists.");
     }
 
-    const user = await User.create({
+    const user = await createUser({
       name: name.trim(),
       email: normalizedEmail,
       password,
@@ -101,7 +109,7 @@ export const register = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Account created successfully.",
-      user: user.toSafeObject()
+      user: userToSafeObject(user)
     });
   } catch (error) {
     next(error);
@@ -117,8 +125,8 @@ export const login = async (req, res, next) => {
       throw new Error("Email and password are required.");
     }
 
-    const user = await User.findOne({ email: normalizeEmail(email) }).select("+password +refreshTokenHash");
-    if (!user || !(await user.comparePassword(password))) {
+    const user = await findUserByEmail(normalizeEmail(email));
+    if (!user || !(await compareUserPassword(user, password))) {
       res.status(401);
       throw new Error("Invalid email or password.");
     }
@@ -128,7 +136,7 @@ export const login = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: "Logged in successfully.",
-      user: user.toSafeObject()
+      user: userToSafeObject(user)
     });
   } catch (error) {
     next(error);
@@ -138,7 +146,7 @@ export const login = async (req, res, next) => {
 export const getMe = async (req, res) => {
   res.status(200).json({
     success: true,
-    user: req.user.toSafeObject()
+    user: userToSafeObject(req.user)
   });
 };
 
@@ -151,7 +159,7 @@ export const refreshSession = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.userId).select("+refreshTokenHash");
+    const user = await findUserById(decoded.userId);
 
     if (!user?.refreshTokenHash || !(await bcrypt.compare(token, user.refreshTokenHash))) {
       res.status(401);
@@ -163,7 +171,7 @@ export const refreshSession = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: "Session refreshed.",
-      user: user.toSafeObject()
+      user: userToSafeObject(user)
     });
   } catch (error) {
     clearAuthCookies(res);
@@ -177,7 +185,7 @@ export const logout = async (req, res, next) => {
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-        await User.findByIdAndUpdate(decoded.userId, { $unset: { refreshTokenHash: 1 } });
+        await clearRefreshTokenHash(decoded.userId);
       } catch {
         clearAuthCookies(res);
       }
