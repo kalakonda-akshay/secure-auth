@@ -1,6 +1,12 @@
 import mongoose from "mongoose";
 
 const connectDB = async () => {
+  if (process.env.ALLOW_MEMORY_STORE === "true" && process.env.MONGO_URI?.startsWith("memory://")) {
+    globalThis.USE_MEMORY_STORE = true;
+    console.warn("Using in-memory demo store. Data resets when the backend restarts.");
+    return;
+  }
+
   try {
     const connection = await mongoose.connect(process.env.MONGO_URI);
     console.log(`MongoDB connected: ${connection.connection.host}`);
